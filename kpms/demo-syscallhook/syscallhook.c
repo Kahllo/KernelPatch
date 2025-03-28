@@ -80,21 +80,24 @@ void after_read(hook_fargs3_t *args, void *udata)
 
     int fd = (int)args->local.data0;
     char __user *user_buf = (char __user *)args->local.data1;
-    char kbuf[512] = {0};
+    char kbuf[512];
 
-    if (ret > sizeof(kbuf) - 1) return;
-    if (copy_from_user(kbuf, user_buf, ret) != 0) return;
+    // Zero manually without memset
+    for (int i = 0; i < sizeof(kbuf); i++) kbuf[i] = 0;
 
-    char *line = strstr(kbuf, "TracerPid:");
+    if ((size_t)ret > sizeof(kbuf) - 1) return;
+    if (compat_copy_from_user(kbuf, user_buf, ret) != 0) return;
+
+    char *line = kpm_strstr(kbuf, "TracerPid:");
     if (line) {
-        char *pid_ptr = line + strlen("TracerPid:");
+        char *pid_ptr = line + kpm_strlen("TracerPid:");
         while (*pid_ptr == ' ') ++pid_ptr;
         while (*pid_ptr && *pid_ptr != '\n') {
             *pid_ptr = '0';
             ++pid_ptr;
         }
         pr_info("[anti-debug] patched TracerPid in read()\n");
-        copy_to_user(user_buf, kbuf, ret);
+        compat_copy_to_user(user_buf, kbuf, ret);
     }
 }
 
