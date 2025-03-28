@@ -10,10 +10,10 @@
 #include <linux/string.h>
 
 KPM_NAME("anti_debug_kpm");
-KPM_VERSION("1.0.0");
+KPM_VERSION("2.0.0");
 KPM_LICENSE("GPL v2");
 KPM_AUTHOR("you");
-KPM_DESCRIPTION("Bypass common debugger detection syscalls");
+KPM_DESCRIPTION("Bypass advanced debugger detection techniques");
 
 static enum hook_type hook_type = INLINE_CHAIN;
 
@@ -40,8 +40,14 @@ void before_openat(hook_fargs4_t *args, void *udata)
     char buf[256] = {0};
     compat_strncpy_from_user(buf, filename, sizeof(buf));
 
-    if (strstr(buf, "/proc/self/status") || strstr(buf, "/status")) {
-        pr_info("[anti-debug] openat tried to read status, blocking\n");
+    if (strstr(buf, "/proc/self/status") ||
+        strstr(buf, "/proc/self/task/") &&
+        (strstr(buf, "/status") || strstr(buf, "/comm") || strstr(buf, "/mem") || strstr(buf, "/pagemap")) ||
+        strstr(buf, "/proc/self/pagemap") ||
+        strstr(buf, "/proc/self/mem") ||
+        strstr(buf, "/proc/self/maps")) {
+
+        pr_info("[anti-debug] blocked openat path: %s\n", buf);
         args->ret = -ENOENT;
     }
 }
@@ -54,7 +60,7 @@ void before_readlink(hook_fargs3_t *args, void *udata)
     compat_strncpy_from_user(buf, path, sizeof(buf));
 
     if (strstr(buf, "/proc/self/exe") || strstr(buf, "maps")) {
-        pr_info("[anti-debug] readlink attempt: %s, blocking\n", buf);
+        pr_info("[anti-debug] blocked readlink path: %s\n", buf);
         args->ret = -ENOENT;
     }
 }
