@@ -3,7 +3,6 @@
 #include <kpmodule.h>
 #include <linux/printk.h>
 #include <uapi/asm-generic/unistd.h>
-#include <linux/uaccess.h>
 #include <syscall.h>
 #include <kputils.h>
 #include <asm/current.h>
@@ -36,6 +35,20 @@ static char *local_strstr(const char *haystack, const char *needle)
     return NULL;
 }
 
+// Manual safe copy from user
+static int safe_copy_user_string(char *dst, const char __user *src, int maxlen) {
+    int i;
+    char ch = 0;
+    for (i = 0; i < maxlen - 1; ++i) {
+        if (copy_from_user(&ch, src + i, 1) != 0)
+            return -1;
+        dst[i] = ch;
+        if (ch == '\0') break;
+    }
+    dst[i] = '\0';
+    return i;
+}
+
 // ========== ptrace hook ==========
 void before_ptrace(hook_fargs4_t *args, void *udata)
 {
@@ -57,9 +70,9 @@ void before_openat(hook_fargs4_t *args, void *udata)
 {
     const char __user *filename = (typeof(filename))syscall_argn(args, 1);
     char buf[256];
-    for (int i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    int i; for (i = 0; i < 256; i++) buf[i] = '\0';
 
-    if (compat_strncpy_from_user(buf, filename, sizeof(buf)) <= 0) return;
+    if (safe_copy_user_string(buf, filename, sizeof(buf)) <= 0) return;
 
     if (buf[0] &&
         (local_strstr(buf, "/proc/self/status") ||
@@ -82,9 +95,9 @@ void before_readlink(hook_fargs3_t *args, void *udata)
 {
     const char __user *path = (typeof(path))syscall_argn(args, 0);
     char buf[256];
-    for (int i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    int i; for (i = 0; i < 256; i++) buf[i] = '\0';
 
-    if (compat_strncpy_from_user(buf, path, sizeof(buf)) <= 0) return;
+    if (safe_copy_user_string(buf, path, sizeof(buf)) <= 0) return;
 
     if (local_strstr(buf, "/proc/self/exe") || local_strstr(buf, "maps")) {
         pr_info("[anti-debug] blocked readlink path: %s\n", buf);
@@ -100,22 +113,16 @@ void after_read(hook_fargs3_t *args, void *udata)
 
     char __user *user_buf = (char __user *)args->local.data1;
     char kbuf[512];
-    for (int i = 0; i < sizeof(kbuf); i++) kbuf[i] = 0;
+    int i; for (i = 0; i < 512; i++) kbuf[i] = '\0';
 
     if (ret >= sizeof(kbuf)) return;
 
-    if (compat_strncpy_from_user(kbuf, user_buf, ret) <= 0) return;
+    if (copy_from_user(kbuf, user_buf, ret) != 0) return;
 
-    for (int i = 0; i < ret - 10; i++) {
-        if (kbuf[i] == 'T' &&
-            kbuf[i+1] == 'r' &&
-            kbuf[i+2] == 'a' &&
-            kbuf[i+3] == 'c' &&
-            kbuf[i+4] == 'e' &&
-            kbuf[i+5] == 'r' &&
-            kbuf[i+6] == 'P' &&
-            kbuf[i+7] == 'i' &&
-            kbuf[i+8] == 'd' &&
+    for (i = 0; i < ret - 10; i++) {
+        if (kbuf[i] == 'T' && kbuf[i+1] == 'r' && kbuf[i+2] == 'a' &&
+            kbuf[i+3] == 'c' && kbuf[i+4] == 'e' && kbuf[i+5] == 'r' &&
+            kbuf[i+6] == 'P' && kbuf[i+7] == 'i' && kbuf[i+8] == 'd' &&
             kbuf[i+9] == ':') {
 
             int j = i + 10;
@@ -124,7 +131,7 @@ void after_read(hook_fargs3_t *args, void *udata)
                 kbuf[j++] = '0';
             }
             pr_info("[anti-debug] TracerPid spoofed in read()\n");
-            compat_copy_to_user(user_buf, kbuf, ret);
+            copy_to_user(user_buf, kbuf, ret);
             break;
         }
     }
@@ -140,7 +147,7 @@ static long anti_debug_init(const char *args, const char *event, void *__user re
     err |= inline_hook_syscalln(__NR_ptrace, 4, before_ptrace, 0, 0);
     err |= fp_hook_syscalln(__NR_getppid, 6, 0, fake_getppid, 0);
     err |= inline_hook_syscalln(__NR_openat, 4, before_openat, 0, 0);
-    err |= inline_hook_syscalln(78, 3, before_readlink, 0, 0); // __NR_readlink = 78 (manually)
+    err |= inline_hook_syscalln(78, 3, before_readlink, 0, 0); // __NR_readlink = 78
     err |= inline_hook_syscalln(__NR_read, 3, 0, after_read, 0);
 
     if (err)
