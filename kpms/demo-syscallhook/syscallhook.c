@@ -42,13 +42,13 @@ void before_openat(hook_fargs4_t *args, void *udata)
 
     if (compat_strncpy_from_user(buf, filename, sizeof(buf)) <= 0) return;
 
-    if ((buf[0] &&
-         (strstr(buf, "/proc/self/status") ||
-          strstr(buf, "/proc/self/task/") &&
-          (strstr(buf, "/status") || strstr(buf, "/comm") || strstr(buf, "/mem") || strstr(buf, "/pagemap")) ||
-          strstr(buf, "/proc/self/pagemap") ||
-          strstr(buf, "/proc/self/mem") ||
-          strstr(buf, "/proc/self/maps"))) {
+    if (buf[0] &&
+        (strstr(buf, "/proc/self/status") ||
+         (strstr(buf, "/proc/self/task/") &&
+         (strstr(buf, "/status") || strstr(buf, "/comm") || strstr(buf, "/mem") || strstr(buf, "/pagemap"))) ||
+         strstr(buf, "/proc/self/pagemap") ||
+         strstr(buf, "/proc/self/mem") ||
+         strstr(buf, "/proc/self/maps")) {
 
         pr_info("[anti-debug] blocked openat path: %s\n", buf);
         args->ret = -ENOENT;
@@ -56,6 +56,10 @@ void before_openat(hook_fargs4_t *args, void *udata)
 }
 
 // ========== readlink hook ==========
+#ifndef __NR_readlink
+#define __NR_readlink 89
+#endif
+
 void before_readlink(hook_fargs3_t *args, void *udata)
 {
     const char __user *path = (typeof(path))syscall_argn(args, 0);
