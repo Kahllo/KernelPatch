@@ -7,6 +7,7 @@
 #include <syscall.h>
 #include <kputils.h>
 #include <asm/current.h>
+#include <string.h>
 
 KPM_NAME("anti_debug_kpm");
 KPM_VERSION("1.0.0");
@@ -20,8 +21,8 @@ static enum hook_type hook_type = INLINE_CHAIN;
 void before_ptrace(hook_fargs4_t *args, void *udata)
 {
     pr_info("[anti-debug] ptrace called, spoofing return\n");
-    args->ret = 0; // Bypass any ptrace anti-debug
-    args->skip = true;
+    args->ret = 0;
+    args->hook = SKIP_ORIG;
 }
 
 // ========== getppid hook ==========
@@ -41,8 +42,8 @@ void before_openat(hook_fargs4_t *args, void *udata)
 
     if (strstr(buf, "/proc/self/status") || strstr(buf, "/status")) {
         pr_info("[anti-debug] openat tried to read status, blocking\n");
-        args->ret = -ENOENT; // Hide file
-        args->skip = true;
+        args->ret = -ENOENT;
+        args->hook = SKIP_ORIG;
     }
 }
 
@@ -56,7 +57,7 @@ void before_readlink(hook_fargs3_t *args, void *udata)
     if (strstr(buf, "/proc/self/exe") || strstr(buf, "maps")) {
         pr_info("[anti-debug] readlink attempt: %s, blocking\n", buf);
         args->ret = -ENOENT;
-        args->skip = true;
+        args->hook = SKIP_ORIG;
     }
 }
 
@@ -68,9 +69,9 @@ static long anti_debug_init(const char *args, const char *event, void *__user re
     hook_err_t err = 0;
 
     err |= inline_hook_syscalln(__NR_ptrace, 4, before_ptrace, 0, 0);
-    err |= fp_hook_syscall(__NR_getppid, fake_getppid);
+    err |= fp_hook_syscalln(__NR_getppid, 0, fake_getppid);
     err |= inline_hook_syscalln(__NR_openat, 4, before_openat, 0, 0);
-    err |= inline_hook_syscalln(__NR_readlink, 3, before_readlink, 0, 0);
+    err |= inline_hook_syscalln(78, 3, before_readlink, 0, 0); // __NR_readlink = 78 on ARM64
 
     if (err)
         pr_err("[anti-debug] One or more hooks failed\n");
@@ -92,9 +93,9 @@ static long anti_debug_exit(void *__user reserved)
     pr_info("[anti-debug] exit, unhooking syscalls\n");
 
     inline_unhook_syscalln(__NR_ptrace, before_ptrace, 0);
-    fp_unhook_syscall(__NR_getppid);
+    fp_unhook_syscalln(__NR_getppid, 0);
     inline_unhook_syscalln(__NR_openat, before_openat, 0);
-    inline_unhook_syscalln(__NR_readlink, before_readlink, 0);
+    inline_unhook_syscalln(78, before_readlink, 0); // readlink
 
     return 0;
 }
