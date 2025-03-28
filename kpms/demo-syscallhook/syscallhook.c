@@ -22,7 +22,7 @@ void before_ptrace(hook_fargs4_t *args, void *udata)
 {
     pr_info("[anti-debug] ptrace called, spoofing return\n");
     args->ret = 0;
-    args->hook = SKIP_ORIG;
+    return;
 }
 
 // ========== getppid hook ==========
@@ -43,7 +43,6 @@ void before_openat(hook_fargs4_t *args, void *udata)
     if (strstr(buf, "/proc/self/status") || strstr(buf, "/status")) {
         pr_info("[anti-debug] openat tried to read status, blocking\n");
         args->ret = -ENOENT;
-        args->hook = SKIP_ORIG;
     }
 }
 
@@ -57,7 +56,6 @@ void before_readlink(hook_fargs3_t *args, void *udata)
     if (strstr(buf, "/proc/self/exe") || strstr(buf, "maps")) {
         pr_info("[anti-debug] readlink attempt: %s, blocking\n", buf);
         args->ret = -ENOENT;
-        args->hook = SKIP_ORIG;
     }
 }
 
@@ -69,7 +67,7 @@ static long anti_debug_init(const char *args, const char *event, void *__user re
     hook_err_t err = 0;
 
     err |= inline_hook_syscalln(__NR_ptrace, 4, before_ptrace, 0, 0);
-    err |= fp_hook_syscalln(__NR_getppid, 0, fake_getppid);
+    err |= fp_hook_syscalln(__NR_getppid, 6, 0, fake_getppid, 0);
     err |= inline_hook_syscalln(__NR_openat, 4, before_openat, 0, 0);
     err |= inline_hook_syscalln(78, 3, before_readlink, 0, 0); // __NR_readlink = 78 on ARM64
 
@@ -93,7 +91,7 @@ static long anti_debug_exit(void *__user reserved)
     pr_info("[anti-debug] exit, unhooking syscalls\n");
 
     inline_unhook_syscalln(__NR_ptrace, before_ptrace, 0);
-    fp_unhook_syscalln(__NR_getppid, 0);
+    fp_unhook_syscalln(__NR_getppid, 0, fake_getppid);
     inline_unhook_syscalln(__NR_openat, before_openat, 0);
     inline_unhook_syscalln(78, before_readlink, 0); // readlink
 
