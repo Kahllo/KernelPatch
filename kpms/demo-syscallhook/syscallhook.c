@@ -10,10 +10,10 @@
 #include <linux/string.h>
 
 KPM_NAME("anti_debug_kpm");
-KPM_VERSION("2.1.0");
+KPM_VERSION("2.0.0");
 KPM_LICENSE("GPL v2");
 KPM_AUTHOR("you");
-KPM_DESCRIPTION("Bypass advanced debugger detection techniques including TracerPid content");
+KPM_DESCRIPTION("Bypass advanced debugger detection techniques");
 
 static enum hook_type hook_type = INLINE_CHAIN;
 
@@ -37,15 +37,18 @@ asmlinkage long fake_getppid(unsigned long arg1, unsigned long arg2, unsigned lo
 void before_openat(hook_fargs4_t *args, void *udata)
 {
     const char __user *filename = (typeof(filename))syscall_argn(args, 1);
-    char buf[256] = {0};
-    compat_strncpy_from_user(buf, filename, sizeof(buf));
+    char buf[256];
+    for (int i = 0; i < sizeof(buf); i++) buf[i] = 0;
 
-    if (strstr(buf, "/proc/self/status") ||
-        strstr(buf, "/proc/self/task/") &&
-        (strstr(buf, "/status") || strstr(buf, "/comm") || strstr(buf, "/mem") || strstr(buf, "/pagemap")) ||
-        strstr(buf, "/proc/self/pagemap") ||
-        strstr(buf, "/proc/self/mem") ||
-        strstr(buf, "/proc/self/maps")) {
+    if (compat_strncpy_from_user(buf, filename, sizeof(buf)) <= 0) return;
+
+    if ((buf[0] &&
+         (strstr(buf, "/proc/self/status") ||
+          strstr(buf, "/proc/self/task/") &&
+          (strstr(buf, "/status") || strstr(buf, "/comm") || strstr(buf, "/mem") || strstr(buf, "/pagemap")) ||
+          strstr(buf, "/proc/self/pagemap") ||
+          strstr(buf, "/proc/self/mem") ||
+          strstr(buf, "/proc/self/maps"))) {
 
         pr_info("[anti-debug] blocked openat path: %s\n", buf);
         args->ret = -ENOENT;
@@ -56,8 +59,10 @@ void before_openat(hook_fargs4_t *args, void *udata)
 void before_readlink(hook_fargs3_t *args, void *udata)
 {
     const char __user *path = (typeof(path))syscall_argn(args, 0);
-    char buf[256] = {0};
-    compat_strncpy_from_user(buf, path, sizeof(buf));
+    char buf[256];
+    for (int i = 0; i < sizeof(buf); i++) buf[i] = 0;
+
+    if (compat_strncpy_from_user(buf, path, sizeof(buf)) <= 0) return;
 
     if (strstr(buf, "/proc/self/exe") || strstr(buf, "maps")) {
         pr_info("[anti-debug] blocked readlink path: %s\n", buf);
@@ -65,39 +70,41 @@ void before_readlink(hook_fargs3_t *args, void *udata)
     }
 }
 
-// ========== read hook (to patch TracerPid) ==========
-void before_read(hook_fargs3_t *args, void *udata)
-{
-    args->local.data0 = syscall_argn(args, 0); // fd
-    args->local.data1 = syscall_argn(args, 1); // buf
-    args->local.data2 = syscall_argn(args, 2); // count
-}
-
+// ========== read after-hook (TracerPid patch) ==========
 void after_read(hook_fargs3_t *args, void *udata)
 {
     ssize_t ret = args->ret;
     if (ret <= 0) return;
 
-    int fd = (int)args->local.data0;
     char __user *user_buf = (char __user *)args->local.data1;
     char kbuf[512];
-
-    // Zero manually without memset
     for (int i = 0; i < sizeof(kbuf); i++) kbuf[i] = 0;
 
-    if ((size_t)ret > sizeof(kbuf) - 1) return;
-    if (compat_copy_from_user(kbuf, user_buf, ret) != 0) return;
+    if (ret >= sizeof(kbuf)) return;
 
-    char *line = kpm_strstr(kbuf, "TracerPid:");
-    if (line) {
-        char *pid_ptr = line + kpm_strlen("TracerPid:");
-        while (*pid_ptr == ' ') ++pid_ptr;
-        while (*pid_ptr && *pid_ptr != '\n') {
-            *pid_ptr = '0';
-            ++pid_ptr;
+    if (compat_strncpy_from_user(kbuf, user_buf, ret) <= 0) return;
+
+    for (int i = 0; i < ret - 10; i++) {
+        if (kbuf[i] == 'T' &&
+            kbuf[i+1] == 'r' &&
+            kbuf[i+2] == 'a' &&
+            kbuf[i+3] == 'c' &&
+            kbuf[i+4] == 'e' &&
+            kbuf[i+5] == 'r' &&
+            kbuf[i+6] == 'P' &&
+            kbuf[i+7] == 'i' &&
+            kbuf[i+8] == 'd' &&
+            kbuf[i+9] == ':') {
+
+            int j = i + 10;
+            while (j < ret && kbuf[j] == ' ') j++;
+            while (j < ret && kbuf[j] >= '0' && kbuf[j] <= '9') {
+                kbuf[j++] = '0';
+            }
+            pr_info("[anti-debug] TracerPid spoofed in read()\n");
+            compat_copy_to_user(user_buf, kbuf, ret);
+            break;
         }
-        pr_info("[anti-debug] patched TracerPid in read()\n");
-        compat_copy_to_user(user_buf, kbuf, ret);
     }
 }
 
@@ -111,8 +118,8 @@ static long anti_debug_init(const char *args, const char *event, void *__user re
     err |= inline_hook_syscalln(__NR_ptrace, 4, before_ptrace, 0, 0);
     err |= fp_hook_syscalln(__NR_getppid, 6, 0, fake_getppid, 0);
     err |= inline_hook_syscalln(__NR_openat, 4, before_openat, 0, 0);
-    err |= inline_hook_syscalln(78, 3, before_readlink, 0, 0); // readlink
-    err |= inline_hook_syscalln(__NR_read, 3, before_read, after_read, 0); // read()
+    err |= inline_hook_syscalln(__NR_readlink, 3, before_readlink, 0, 0);
+    err |= inline_hook_syscalln(__NR_read, 3, 0, after_read, 0);
 
     if (err)
         pr_err("[anti-debug] One or more hooks failed\n");
@@ -136,8 +143,8 @@ static long anti_debug_exit(void *__user reserved)
     inline_unhook_syscalln(__NR_ptrace, before_ptrace, 0);
     fp_unhook_syscalln(__NR_getppid, 0, fake_getppid);
     inline_unhook_syscalln(__NR_openat, before_openat, 0);
-    inline_unhook_syscalln(78, before_readlink, 0);
-    inline_unhook_syscalln(__NR_read, before_read, after_read);
+    inline_unhook_syscalln(__NR_readlink, before_readlink, 0);
+    inline_unhook_syscalln(__NR_read, 0, after_read);
 
     return 0;
 }
