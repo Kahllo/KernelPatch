@@ -7,7 +7,7 @@
 #include <syscall.h>
 #include <kputils.h>
 #include <asm/current.h>
-#include <string.h>
+#include <linux/string.h>
 
 KPM_NAME("anti_debug_kpm");
 KPM_VERSION("1.0.0");
