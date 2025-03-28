@@ -10,10 +10,10 @@
 #include <linux/string.h>
 
 KPM_NAME("anti_debug_kpm");
-KPM_VERSION("2.0.0");
+KPM_VERSION("2.1.0");
 KPM_LICENSE("GPL v2");
 KPM_AUTHOR("you");
-KPM_DESCRIPTION("Bypass advanced debugger detection techniques");
+KPM_DESCRIPTION("Bypass advanced debugger detection techniques including TracerPid content");
 
 static enum hook_type hook_type = INLINE_CHAIN;
 
@@ -65,6 +65,39 @@ void before_readlink(hook_fargs3_t *args, void *udata)
     }
 }
 
+// ========== read hook (to patch TracerPid) ==========
+void before_read(hook_fargs3_t *args, void *udata)
+{
+    args->local.data0 = syscall_argn(args, 0); // fd
+    args->local.data1 = syscall_argn(args, 1); // buf
+    args->local.data2 = syscall_argn(args, 2); // count
+}
+
+void after_read(hook_fargs3_t *args, void *udata)
+{
+    ssize_t ret = args->ret;
+    if (ret <= 0) return;
+
+    int fd = (int)args->local.data0;
+    char __user *user_buf = (char __user *)args->local.data1;
+    char kbuf[512] = {0};
+
+    if (ret > sizeof(kbuf) - 1) return;
+    if (copy_from_user(kbuf, user_buf, ret) != 0) return;
+
+    char *line = strstr(kbuf, "TracerPid:");
+    if (line) {
+        char *pid_ptr = line + strlen("TracerPid:");
+        while (*pid_ptr == ' ') ++pid_ptr;
+        while (*pid_ptr && *pid_ptr != '\n') {
+            *pid_ptr = '0';
+            ++pid_ptr;
+        }
+        pr_info("[anti-debug] patched TracerPid in read()\n");
+        copy_to_user(user_buf, kbuf, ret);
+    }
+}
+
 // ========== INIT ==========
 static long anti_debug_init(const char *args, const char *event, void *__user reserved)
 {
@@ -75,7 +108,8 @@ static long anti_debug_init(const char *args, const char *event, void *__user re
     err |= inline_hook_syscalln(__NR_ptrace, 4, before_ptrace, 0, 0);
     err |= fp_hook_syscalln(__NR_getppid, 6, 0, fake_getppid, 0);
     err |= inline_hook_syscalln(__NR_openat, 4, before_openat, 0, 0);
-    err |= inline_hook_syscalln(78, 3, before_readlink, 0, 0); // __NR_readlink = 78 on ARM64
+    err |= inline_hook_syscalln(78, 3, before_readlink, 0, 0); // readlink
+    err |= inline_hook_syscalln(__NR_read, 3, before_read, after_read, 0); // read()
 
     if (err)
         pr_err("[anti-debug] One or more hooks failed\n");
@@ -99,7 +133,8 @@ static long anti_debug_exit(void *__user reserved)
     inline_unhook_syscalln(__NR_ptrace, before_ptrace, 0);
     fp_unhook_syscalln(__NR_getppid, 0, fake_getppid);
     inline_unhook_syscalln(__NR_openat, before_openat, 0);
-    inline_unhook_syscalln(78, before_readlink, 0); // readlink
+    inline_unhook_syscalln(78, before_readlink, 0);
+    inline_unhook_syscalln(__NR_read, before_read, after_read);
 
     return 0;
 }
