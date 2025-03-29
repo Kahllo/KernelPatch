@@ -15,6 +15,7 @@ KPM_DESCRIPTION("Block /proc/self/status and /proc/self/task/*/status");
 
 #define PROC_SELF_STATUS "/proc/self/status"
 #define PROC_SELF_TASK "/proc/self/task/"
+#define STATUS "/status"
 
 void before_openat(hook_fargs4_t *args, void *udata)
 {
@@ -25,9 +26,9 @@ void before_openat(hook_fargs4_t *args, void *udata)
         return;
 
     // Exact or prefix match
-    if (!__builtin_strcmp(buf, "/proc/self/status") ||
-        (__builtin_strncmp(buf, "/proc/self/task/", 17) == 0 &&
-         __builtin_strstr(buf, "/status") != 0)) {
+    if (!__builtin_strcmp(buf, PROC_SELF_STATUS) ||
+        (__builtin_strncmp(buf, PROC_SELF_TASK, 17) == 0 &&
+         __builtin_strstr(buf, STATUS) != 0)) {
 
         pr_info("[anti-debug] blocked openat: %s\n", buf);
         args->ret = -ENOENT;
