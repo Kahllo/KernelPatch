@@ -10,7 +10,7 @@
 KPM_NAME("kpm-debugger-bypass");
 KPM_VERSION("1.0.1");
 KPM_LICENSE("GPL v2");
-KPM_AUTHOR("you");
+KPM_AUTHOR("Kahllo");
 KPM_DESCRIPTION("Block /proc/self/status and /proc/self/task/*/status via openat");
 
 enum hook_type hook_type = NONE;
