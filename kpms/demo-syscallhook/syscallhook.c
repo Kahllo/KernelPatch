@@ -10,24 +10,25 @@ KPM_NAME("anti_debug_kpm");
 KPM_VERSION("1.0.1");
 KPM_LICENSE("GPL v2");
 KPM_AUTHOR("safe");
-KPM_DESCRIPTION("Block access to /proc/self/status to evade debugger detection");
+KPM_DESCRIPTION("Safe anti-debug openat hook - block /proc/self/status only");
 
-// Simple string prefix check to avoid strstr entirely
-static int is_proc_self_status(const char *path) {
-    const char *target = "/proc/self/status";
-    int i = 0;
-    while (path[i] && target[i]) {
-        if (path[i] != target[i]) return 0;
-        i++;
+// Simple prefix match (no strstr)
+static int starts_with(const char *s, const char *prefix) {
+    if (!s || !prefix) return 0;
+    while (*prefix) {
+        if (*s++ != *prefix++) return 0;
     }
-    return target[i] == '\0';
+    return 1;
 }
 
+// openat hook: block /proc/self/status
 void before_openat(hook_fargs4_t *args, void *udata) {
     const char *filename = (const char *)syscall_argn(args, 1);
-    if (filename && is_proc_self_status(filename)) {
-        pr_info("[anti-debug] blocked access to /proc/self/status\n");
+    if (filename && starts_with(filename, "/proc/self/status")) {
+        pr_info("[anti-debug] blocked openat: %s\n", filename);
         args->ret = -1;
+    } else {
+        pr_info("[anti-debug] openat allowed\n");
     }
 }
 
@@ -38,7 +39,7 @@ static long anti_debug_init(const char *args, const char *event, void *__user re
         pr_err("[anti-debug] hook failed\n");
         return -1;
     }
-    pr_info("[anti-debug] hook success\n");
+    pr_info("[anti-debug] hook installed\n");
     return 0;
 }
 
