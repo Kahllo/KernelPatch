@@ -12,7 +12,8 @@
 #include <linux/string.h>
 #include <kputils.h>
 #include <asm/current.h>
-#include <linux/sched.h>
+#include <linux/sched.h>  // For task_struct
+#include <linux/pid.h>    // For pid_t definition
 
 KPM_NAME("kpm-debugger-bypass");
 KPM_VERSION("1.0.0");
@@ -38,8 +39,15 @@ void before_openat(hook_fargs4_t *args, void *udata)
 
     // Check if the file being opened is /proc/self/status
     if (strcmp(buf, PROC_SELF_STATUS) == 0) {
-        struct task_struct *task = current;
-        pid_t pid = task->pid;
+        struct task_struct *task = current;  // Get current task
+        pid_t pid;
+
+        // Safely get the PID using kernel API if available, otherwise fallback
+#ifdef CONFIG_PID_NS
+        pid = task_pid_nr(task);  // Preferred method to get PID in modern kernels
+#else
+        pid = task->pid;          // Fallback for older kernels
+#endif
 
         pr_info("Detected openat for %s by pid %d\n", buf, pid);
 
