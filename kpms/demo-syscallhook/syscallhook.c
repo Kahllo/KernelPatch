@@ -7,37 +7,48 @@
 #include <asm/current.h>
 
 KPM_NAME("anti_debug_kpm");
-KPM_VERSION("0.3.0");
+KPM_VERSION("0.3.1");
 KPM_LICENSE("GPL v2");
 KPM_AUTHOR("you");
-KPM_DESCRIPTION("Minimal anti-debug hook: block openat to status/maps/mem");
+KPM_DESCRIPTION("Minimal and safe anti-debug module");
 
-static char *safe_str(const char *s) {
-    if (!s) return "(null)";
-    for (int i = 0; i < 256; i++) {
-        if (s[i] == '\0') return (char *)s;
+/* Safe internal strstr implementation */
+static char *local_strstr(const char *haystack, const char *needle)
+{
+    if (!*needle) return (char *)haystack;
+    for (; *haystack; ++haystack) {
+        const char *h = haystack;
+        const char *n = needle;
+        while (*h && *n && *h == *n) {
+            ++h;
+            ++n;
+        }
+        if (!*n) return (char *)haystack;
     }
-    return "(bad)";
-}
-
-static int is_debug_path(const char *path) {
-    if (!path) return 0;
-    if (__builtin_strstr(path, "/proc/self/status")) return 1;
-    if (__builtin_strstr(path, "/proc/self/maps")) return 1;
-    if (__builtin_strstr(path, "/proc/self/mem")) return 1;
-    if (__builtin_strstr(path, "/proc/self/pagemap")) return 1;
     return 0;
 }
 
+/* Check if the path matches known debugger access files */
+static int is_debug_path(const char *path) {
+    if (!path) return 0;
+    if (local_strstr(path, "/proc/self/status")) return 1;
+    if (local_strstr(path, "/proc/self/maps")) return 1;
+    if (local_strstr(path, "/proc/self/mem")) return 1;
+    if (local_strstr(path, "/proc/self/pagemap")) return 1;
+    return 0;
+}
+
+/* openat syscall hook */
 void before_openat(hook_fargs4_t *args, void *udata)
 {
     const char *filename = (const char *)syscall_argn(args, 1);
     if (is_debug_path(filename)) {
-        pr_info("[anti-debug] blocked openat: %s\n", safe_str(filename));
+        pr_info("[anti-debug] blocked openat: %s\n", filename);
         args->ret = -ENOENT;
     }
 }
 
+/* KPM lifecycle hooks */
 static long anti_debug_init(const char *args, const char *event, void *__user reserved)
 {
     pr_info("[anti-debug] init\n");
