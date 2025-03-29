@@ -3,71 +3,63 @@
 #include <kpmodule.h>
 #include <linux/printk.h>
 #include <uapi/asm-generic/unistd.h>
+#include <linux/uaccess.h>
 #include <syscall.h>
+#include <kputils.h>
 #include <asm/current.h>
 
 KPM_NAME("anti_debug_kpm");
-KPM_VERSION("0.3.1");
+KPM_VERSION("1.0.0");
 KPM_LICENSE("GPL v2");
 KPM_AUTHOR("you");
-KPM_DESCRIPTION("Minimal and safe anti-debug module");
+KPM_DESCRIPTION("Bypass TracerPid and file-based debugger detection (safe)");
 
-/* Safe internal strstr implementation */
-static char *local_strstr(const char *haystack, const char *needle)
-{
+// Local strstr (safe)
+static char *local_strstr(const char *haystack, const char *needle) {
     if (!*needle) return (char *)haystack;
     for (; *haystack; ++haystack) {
-        const char *h = haystack;
-        const char *n = needle;
+        const char *h = haystack, *n = needle;
         while (*h && *n && *h == *n) {
-            ++h;
-            ++n;
+            ++h; ++n;
         }
         if (!*n) return (char *)haystack;
     }
-    return 0;
+    return NULL;
 }
 
-/* Check if the path matches known debugger access files */
+// Local safe path filter
 static int is_debug_path(const char *path) {
-    if (!path) return 0;
-    if (local_strstr(path, "/proc/self/status")) return 1;
-    if (local_strstr(path, "/proc/self/maps")) return 1;
-    if (local_strstr(path, "/proc/self/mem")) return 1;
-    if (local_strstr(path, "/proc/self/pagemap")) return 1;
-    return 0;
+    return path && (
+        local_strstr(path, "/proc/self/status") ||
+        local_strstr(path, "/proc/self/maps") ||
+        local_strstr(path, "/proc/self/mem") ||
+        local_strstr(path, "/proc/self/pagemap")
+    );
 }
 
-/* openat syscall hook */
-void before_openat(hook_fargs4_t *args, void *udata)
-{
-    const char *filename = (const char *)syscall_argn(args, 1);
-    if (is_debug_path(filename)) {
-        pr_info("[anti-debug] blocked openat: %s\n", filename);
+// Hook openat: block suspicious debugger file paths
+void before_openat(hook_fargs4_t *args, void *udata) {
+    const char *fname = (const char *)syscall_argn(args, 1);
+    if (is_debug_path(fname)) {
+        pr_info("[anti-debug] blocked openat: %s\n", fname);
         args->ret = -ENOENT;
     }
 }
 
-/* KPM lifecycle hooks */
-static long anti_debug_init(const char *args, const char *event, void *__user reserved)
-{
+static long anti_debug_init(const char *args, const char *event, void *__user reserved) {
     pr_info("[anti-debug] init\n");
     hook_err_t err = inline_hook_syscalln(__NR_openat, 4, before_openat, 0, 0);
-    if (err)
-        pr_err("[anti-debug] hook failed: %d\n", err);
-    else
-        pr_info("[anti-debug] hook installed\n");
+    if (err) pr_err("[anti-debug] hook error: %d\n", err);
+    else pr_info("[anti-debug] hook installed\n");
     return 0;
 }
 
-static long anti_debug_ctl(const char *args, char *__user out_msg, int outlen)
-{
-    pr_info("[anti-debug] control: %s\n", args);
+static long anti_debug_ctl(const char *args, char *__user out_msg, int outlen) {
+    pr_info("[anti-debug] ctl: %s\n", args);
     return 0;
 }
 
-static long anti_debug_exit(void *__user reserved)
-{
+static long anti_debug_exit(void *__user reserved) {
     inline_unhook_syscalln(__NR_openat, before_openat, 0);
     pr_info("[anti-debug] unhooked\n");
     return 0;
