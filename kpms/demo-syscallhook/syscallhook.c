@@ -5,6 +5,7 @@
 #include <linux/sched.h>
 #include <linux/sched/task.h>
 #include <linux/kallsyms.h>
+#include <kphooks.h>  // Required for hook_function, unhook_function
 
 KPM_NAME("kpm-ptrace-bypass");
 KPM_VERSION("1.0.0");
@@ -18,7 +19,9 @@ static ptrace_parent_t real_ptrace_parent = NULL;
 
 // Hook function: always pretend no tracer is attached
 static struct task_struct *fake_ptrace_parent(struct task_struct *child) {
-    pr_info("[kpm-ptrace-bypass] ptrace_parent called for task: %s\n", child->comm);
+    if (child && child->comm) {
+        pr_info("[kpm-ptrace-bypass] ptrace_parent called for task\n");
+    }
     return NULL;
 }
 
@@ -34,8 +37,8 @@ static long ptrace_bypass_init(const char *args, const char *event, void *__user
     }
 
     // Hook ptrace_parent
-    hook_err_t err = hook_function((void *)real_ptrace_parent, (void *)fake_ptrace_parent);
-    if (err != HOOK_NO_ERR) {
+    int err = hook_function((void *)real_ptrace_parent, (void *)fake_ptrace_parent, (void **)&real_ptrace_parent);
+    if (err != 0) {
         pr_err("[kpm-ptrace-bypass] Failed to hook ptrace_parent: %d\n", err);
         return -1;
     }
