@@ -5,7 +5,6 @@
 #include <linux/sched.h>
 #include <linux/sched/task.h>
 #include <linux/kallsyms.h>
-#include <linux/proc_fs.h>
 #include <linux/nsproxy.h>
 #include <linux/pid_namespace.h>
 #include <linux/user_namespace.h>
