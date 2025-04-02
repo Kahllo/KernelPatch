@@ -3,33 +3,32 @@
 #include <kpmodule.h>
 #include <linux/printk.h>
 #include <linux/kallsyms.h>
-#include <linux/sched.h>
+#include <syscall.h>
 #include <kputils.h>
 #include <hook.h>
 
 KPM_NAME("kpm-tracerpid-bypass");
-KPM_VERSION("1.0.1");
+KPM_VERSION("1.0.2");
 KPM_LICENSE("GPL v2");
 KPM_AUTHOR("Kahllo");
 KPM_DESCRIPTION("Bypass TracerPid by hooking task_state");
 
 enum hook_type hook_type = NONE;
 
-// Original task_state symbol (resolved at runtime)
 static void *task_state_sym = NULL;
 
-static void before_task_state(void *m, void *ns, void *pid, struct task_struct *p)
+void before_task_state(hook_fargs4_t *args, void *udata)
 {
-    // Just log the task name — optional
-    if (p) {
-        pr_info("[kpm-tracerpid-bypass] Suppressing TracerPid for: %s\n", p->comm);
-    }
+    // Suppress printing TracerPid by skipping the original function
+    args->skip_origin = 1;
 
-    // Skip original logic — TracerPid will not be printed
+    // Optional: log that we skipped TracerPid display
+    pr_info("[kpm-tracerpid-bypass] Skipped task_state to hide TracerPid\n");
 }
 
-static void after_task_state(void *m, void *ns, void *pid, struct task_struct *p) {
-    // Not used
+void after_task_state(hook_fargs4_t *args, void *udata)
+{
+    // We don't do anything after
 }
 
 static long tracerpid_bypass_init(const char *args, const char *event, void *__user reserved)
@@ -38,7 +37,7 @@ static long tracerpid_bypass_init(const char *args, const char *event, void *__u
 
     task_state_sym = (void *)kallsyms_lookup_name("task_state");
     if (!task_state_sym) {
-        pr_err("[kpm-tracerpid-bypass] Failed to resolve task_state symbol\n");
+        pr_err("[kpm-tracerpid-bypass] Failed to resolve task_state\n");
         return -1;
     }
 
