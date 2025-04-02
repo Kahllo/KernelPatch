@@ -23,7 +23,7 @@ void before_task_state(hook_fargs4_t *fargs, void *udata)
     if (!p) return;
 
     // Suppress the output of TracerPid by skipping the function call
-    pr_info("[kpm-tracerpid-bypass] Hiding TracerPid for: %s\n", p->comm);
+    pr_info("[kpm-tracerpid-bypass] Suppressed TracerPid\n");
     fargs->skip_origin = 1;
 }
 
