@@ -1,34 +1,34 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include <compiler.h>
 #include <kpmodule.h>
 #include <linux/printk.h>
+#include <linux/sched.h>
 #include <linux/kallsyms.h>
 #include <syscall.h>
 #include <kputils.h>
-#include <hook.h>
 
 KPM_NAME("kpm-tracerpid-bypass");
-KPM_VERSION("1.0.2");
+KPM_VERSION("1.0.1");
 KPM_LICENSE("GPL v2");
 KPM_AUTHOR("Kahllo");
 KPM_DESCRIPTION("Bypass TracerPid by hooking task_state");
 
-enum hook_type hook_type = NONE;
-
 static void *task_state_sym = NULL;
+static enum hook_type hook_type = NONE;
 
-void before_task_state(hook_fargs4_t *args, void *udata)
+// hook_wrap2 requires this prototype
+void before_task_state(hook_fargs4_t *fargs, void *udata)
 {
-    // Suppress printing TracerPid by skipping the original function
-    args->skip_origin = 1;
+    struct task_struct *p = (struct task_struct *)fargs->args[3];
 
-    // Optional: log that we skipped TracerPid display
-    pr_info("[kpm-tracerpid-bypass] Skipped task_state to hide TracerPid\n");
+    if (!p) return;
+
+    // Suppress the output of TracerPid by skipping the function call
+    pr_info("[kpm-tracerpid-bypass] Hiding TracerPid for: %s\n", p->comm);
+    fargs->skip_origin = 1;
 }
 
-void after_task_state(hook_fargs4_t *args, void *udata)
-{
-    // We don't do anything after
+void after_task_state(hook_fargs4_t *fargs, void *udata) {
+    // No-op
 }
 
 static long tracerpid_bypass_init(const char *args, const char *event, void *__user reserved)
@@ -37,26 +37,26 @@ static long tracerpid_bypass_init(const char *args, const char *event, void *__u
 
     task_state_sym = (void *)kallsyms_lookup_name("task_state");
     if (!task_state_sym) {
-        pr_err("[kpm-tracerpid-bypass] Failed to resolve task_state\n");
+        pr_err("[kpm-tracerpid-bypass] Failed to find task_state symbol\n");
         return -1;
     }
 
-    hook_err_t err = hook_wrap2(task_state_sym, before_task_state, after_task_state, 0);
-    if (err) {
-        pr_err("[kpm-tracerpid-bypass] Hook failed: %d\n", err);
+    hook_err_t err = hook_wrap2(task_state_sym, before_task_state, after_task_state, NULL);
+    if (err != HOOK_NO_ERR) {
+        pr_err("[kpm-tracerpid-bypass] hook_wrap2 failed: %d\n", err);
         return -1;
     }
 
-    pr_info("[kpm-tracerpid-bypass] Hook installed\n");
+    pr_info("[kpm-tracerpid-bypass] Hook installed successfully\n");
     hook_type = INLINE_CHAIN;
     return 0;
 }
 
 static long tracerpid_bypass_exit(void *__user reserved)
 {
-    if (hook_type == INLINE_CHAIN && task_state_sym) {
-        unhook_wrap2(task_state_sym, before_task_state, after_task_state);
-        pr_info("[kpm-tracerpid-bypass] Unhooked task_state\n");
+    if (task_state_sym && hook_type == INLINE_CHAIN) {
+        hook_unwrap_remove(task_state_sym, before_task_state, after_task_state, 1);
+        pr_info("[kpm-tracerpid-bypass] Hook removed\n");
     }
 
     return 0;
